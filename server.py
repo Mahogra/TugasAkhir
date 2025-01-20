@@ -4,9 +4,6 @@ import json
 import numpy as np
 from encrypt import enkripsi, dekripsi
 
-# Dictionary to store authentication status for each client
-authenticated_clients = {}
-
 # PID Parameters
 Kp = 1.7
 Ki = 0.03
@@ -15,78 +12,67 @@ Kd = 0.17
 # Control Variables
 integral = 0
 prev_error = 0
-setpoint_angle = 0  # Default setpoint (to be updated from client)
+setpoint_angle = 90  # Setpoint default, bisa diubah sesuai kebutuhan
+
+authenticated_clients = {}
 
 async def server_handler(websocket, path):
     global integral, prev_error, setpoint_angle
-    
+
     print("Client connected")
     client_id = str(websocket.remote_address)
-
+    
     try:
-        # Authentication phase
+        # Authentication
         async for message in websocket:
             if client_id not in authenticated_clients:
-                try:
-                    auth_data = json.loads(message)
-                except json.JSONDecodeError:
-                    print(f"Invalid authentication data from {client_id}")
-                    await websocket.close()
-                    return
-
-                # Check authentication credentials
+                auth_data = json.loads(message)
                 if auth_data.get("name") == "Sean" and auth_data.get("password") == "bayar10rb":
                     authenticated_clients[client_id] = True
                     print(f"Client {client_id} authenticated.")
                     await websocket.send("terautentikasi")
                     break
                 else:
-                    print(f"Authentication failed for {client_id}")
                     await websocket.close()
                     return
 
-        # Communication loop after authentication
+        # Send setpoint to client
+        encrypted_setpoint = str(enkripsi(str(setpoint_angle)))
+        await websocket.send(encrypted_setpoint)
+        print(f"Setpoint {setpoint_angle} dikirim ke client")
+
+        # Control loop
         while client_id in authenticated_clients:
             try:
-                # Receive data (feedback angle) from client
                 received_data = await websocket.recv()
                 decrypted_data = dekripsi(eval(received_data))
-                
-                try:
-                    current_angle = float(decrypted_data)
-                    print(f"Received feedback angle: {current_angle:.2f}°")
-                    
-                    # PID Control Calculation
-                    error = np.radians(setpoint_angle) - np.radians(current_angle)
-                    integral += error
-                    derivative = error - prev_error
-                    pid_output = (Kp * error) + (Ki * integral) + (Kd * derivative)
-                    prev_error = error
-                    
-                    # Calculate PWM output
-                    pwm_output = max(10, min(100, abs(pid_output * 100)))
-                    direction = 1 if pid_output > 0 else -1
-                    control_signal = pwm_output * direction
+                current_angle = float(decrypted_data)
+                print(f"Feedback angle: {current_angle:.2f}")
 
-                    # Send PWM value to client
-                    encrypted_response = str(enkripsi(str(control_signal)))
-                    await websocket.send(encrypted_response)
-                    print(f"Sent PWM value: {control_signal:.2f}%")
-                    
-                except ValueError:
-                    print("Invalid feedback data received")
-                
-                await asyncio.sleep(1)
+                # PID Control
+                error = np.radians(setpoint_angle) - np.radians(current_angle)
+                integral += error
+                derivative = error - prev_error
+                pid_output = (Kp * error) + (Ki * integral) + (Kd * derivative)
+                prev_error = error
 
-            except websockets.exceptions.ConnectionClosed:
-                print(f"Client {client_id} disconnected.")
+                pwm_output = max(0, min(100, abs(pid_output * 100)))
+                direction = 1 if pid_output > 0 else -1
+                control_signal = pwm_output * direction
+
+                encrypted_response = str(enkripsi(str(control_signal)))
+                await websocket.send(encrypted_response)
+                print(f"PWM sent to client: {control_signal:.2f}")
+
+            except Exception as e:
+                print(f"Error: {e}")
                 break
 
-    except websockets.exceptions.ConnectionClosed as e:
-        print(f"Connection Closed: {e}")
+    except websockets.exceptions.ConnectionClosed:
+        print(f"Client {client_id} disconnected.")
     finally:
         authenticated_clients.pop(client_id, None)
-        print(f"Client {client_id} disconnected")
+        print(f"Client {client_id} logged out.")
 
 async def start_server():
     server = await websockets.serve(server_handler, "0.0.0.0", 8765)

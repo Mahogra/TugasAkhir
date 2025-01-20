@@ -23,3 +23,12 @@ if len(sys.argv) > 1:
         lj.set_dutycycle(value1=abs(pwm_value) * direction)
         time.sleep(0.5)
         lj.set_dutycycle(value1=0)  # Matikan motor setelah menjalankan
+
+def get_current_angle():
+    # Baca sudut dari encoder dan konversi ke derajat
+    encoder_count = lj.get_counter() - initial_encoder_count
+    return (360 / ppr) * encoder_count
+
+def set_motor_pwm(pwm_value):
+    direction = 1 if pwm_value > 0 else -1
+    lj.set_dutycycle(value1=abs(pwm_value) * direction)
